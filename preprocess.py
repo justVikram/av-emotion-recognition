@@ -33,6 +33,8 @@ def split_video(video_path, output_path, count):
     # Get frames for each segment
     frames_path = os.path.join(new_output_path, 'frames')
     os.mkdir(frames_path)
+    audio_path = os.path.join(new_output_path, 'audio')
+    os.mkdir(audio_path)
 
     segment_count = 0
     for segment in os.listdir(os.path.join(new_output_path, 'segments')):
@@ -40,7 +42,15 @@ def split_video(video_path, output_path, count):
             segment_count = segment_count + 1
             segment_to_frame_dir = os.path.join(frames_path, f'frames_for_segment_{segment_count}')
             os.mkdir(segment_to_frame_dir)
+            segment_to_audio_dir = os.path.join(audio_path, f'audio_for_segment_{segment_count}')
+            os.mkdir(segment_to_audio_dir)
             get_frames(os.path.join(f'{new_output_path}/segments', segment), segment_to_frame_dir)
+            extract_audio(os.path.join(f'{new_output_path}/segments', segment), segment_to_audio_dir)
+
+
+# Function to extract audio from segment
+def extract_audio(video_path, output_path):
+    os.system(f'ffmpeg -i {video_path} -vn -acodec copy {output_path}/output-audio.aac')
 
 
 # Function to get frames from video into frames
