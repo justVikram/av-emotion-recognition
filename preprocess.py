@@ -59,9 +59,6 @@ def get_frames(video_path, output_path):
 
 
 if __name__ == '__main__':
-    # Split video into frames
-    # op = get_frames('./data/input/vid.mp4', 0.1)
-
     source_path = '/Users/avikram/Projects/av-emotion-recognition/data/input'
     output_path = '/Users/avikram/Projects/av-emotion-recognition/data/output'
     preprocess_vid(source_path, output_path)
