@@ -48,7 +48,7 @@ def get_frames(video_path, output_path):
         ret, frame = cap.read()
         if ret:
             frame_count = frame_count + 1
-            cv.imwrite(os.path.join(os.path.dirname(output_path), f'frame_{frame_count}.jpg'), frame)
+            cv.imwrite(os.path.join(os.path.join(output_path), f'frame_{frame_count}.jpg'), frame)
         else:
             break
 
