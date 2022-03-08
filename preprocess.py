@@ -1,5 +1,8 @@
 import cv2 as cv
 import os
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
 
 
 def preprocess_vid(source_path, output_path):
@@ -35,6 +38,8 @@ def split_video(video_path, output_path, count):
     os.mkdir(frames_path)
     audio_path = os.path.join(new_output_path, 'audio')
     os.mkdir(audio_path)
+    mfcc_path = os.path.join(new_output_path, 'mfcc')
+    os.mkdir(mfcc_path)
 
     segment_count = 0
     for segment in os.listdir(os.path.join(new_output_path, 'segments')):
@@ -44,13 +49,23 @@ def split_video(video_path, output_path, count):
             os.mkdir(segment_to_frame_dir)
             segment_to_audio_dir = os.path.join(audio_path, f'audio_for_segment_{segment_count}')
             os.mkdir(segment_to_audio_dir)
+            mfcc_to_segment_dir = os.path.join(mfcc_path, f'mfcc_for_segment_{segment_count}')
+            os.mkdir(mfcc_to_segment_dir)
             get_frames(os.path.join(f'{new_output_path}/segments', segment), segment_to_frame_dir)
             extract_audio(os.path.join(f'{new_output_path}/segments', segment), segment_to_audio_dir)
+            extract_mfcc(os.path.join(segment_to_audio_dir, 'output-audio.aac'), mfcc_to_segment_dir)
 
 
 # Function to extract audio from segment
 def extract_audio(video_path, output_path):
     os.system(f'ffmpeg -i {video_path} -vn -acodec copy {output_path}/output-audio.aac')
+
+
+def extract_mfcc(audio_path, output_path):
+    y, sr = librosa.load(audio_path)
+    mfcc = librosa.feature.mfcc(y=y, sr=sr)
+    librosa.display.specshow(mfcc, x_axis='time')
+    plt.savefig(os.path.join(output_path, 'mfcc.png'))
 
 
 # Function to get frames from video into frames
