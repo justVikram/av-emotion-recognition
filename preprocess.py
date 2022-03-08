@@ -31,13 +31,16 @@ def split_video(video_path, output_path, count):
         seek = seek + 2
 
     # Get frames for each segment
+    frames_path = os.path.join(new_output_path, 'frames')
+    os.mkdir(frames_path)
+
     segment_count = 0
     for segment in os.listdir(os.path.join(new_output_path, 'segments')):
         if segment.endswith('.mp4'):
             segment_count = segment_count + 1
-            frames_dir = os.path.join(new_output_path, f'frames_for_segment_{segment_count}')
-            os.mkdir(frames_dir)
-            get_frames(os.path.join(f'{new_output_path}/segments', segment), frames_dir)
+            segment_to_frame_dir = os.path.join(frames_path, f'frames_for_segment_{segment_count}')
+            os.mkdir(segment_to_frame_dir)
+            get_frames(os.path.join(f'{new_output_path}/segments', segment), segment_to_frame_dir)
 
 
 # Function to get frames from video into frames
