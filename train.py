@@ -33,7 +33,7 @@ use_cuda = torch.cuda.is_available()
 print('use_cuda: {}'.format(use_cuda))
 
 syncnet_T = 5
-syncnet_mel_step_size = 16  # TODO: What to select?
+syncnet_mel_step_size = 13  # TODO: What to select?
 
 
 class Dataset(object):
@@ -91,13 +91,15 @@ class Dataset(object):
             vid_name = self.all_videos[idx]
             identifiers = vid_name.split('_')
             label = identifiers[2]
+            speaker_identity = identifiers[0]
 
             negative_idx = random.randint(0, len(self.all_videos) - 1)
             negative_vid_name = self.all_videos[negative_idx]
             negative_identifiers = negative_vid_name.split('_')
             negative_label = negative_identifiers[2]
+            negative_speaker_identity = negative_identifiers[0]
 
-            if label == negative_label:
+            if label == negative_label and speaker_identity != negative_speaker_identity:
                 continue
 
             img_names = list(glob(join(vid_name, '*.jpg')))  # all the jpg images of the particular folder is stored
@@ -129,7 +131,7 @@ class Dataset(object):
                 except Exception as e:
                     all_read = False
                     break
-                window.append(img)  # all 5 images are appended
+                window.append(img)  # all 2 images are appended
 
             if not all_read:
                 continue
@@ -142,9 +144,9 @@ class Dataset(object):
             except Exception as e:
                 continue
 
-            positive_mfcc = self.crop_audio_window(full_length_mfcc.copy(), anchor_frame)  # mel wrt to the frame
+            positive_mel = self.crop_audio_window(full_length_mfcc.copy(), anchor_frame)  # mel wrt to the frame
 
-            if positive_mfcc.shape[0] != syncnet_mel_step_size:
+            if positive_mel.shape[0] != syncnet_mel_step_size:
                 continue
 
             # MFCC from negative audio sample
@@ -155,16 +157,16 @@ class Dataset(object):
             except Exception as e:
                 continue
 
-            negative_mfcc = self.crop_audio_window(negative_full_length_mfcc.copy(), negative_anchor_frame)
+            negative_mel = self.crop_audio_window(negative_full_length_mfcc.copy(), negative_anchor_frame)
 
             # H x W x 3 * T
             anchor_window = np.concatenate(window, axis=2) / 255.  # the whole window of 5 frames is then concatenated
             anchor_window = anchor_window.transpose(2, 0, 1)
 
             anchor_window = torch.FloatTensor(anchor_window)
-            positive_mfcc = torch.FloatTensor(positive_mfcc.T).unsqueeze(0)
+            positive_mel = torch.FloatTensor(positive_mel.T).unsqueeze(0)
 
-            return anchor_window, positive_mfcc, negative_mfcc, label  # x are the frames,
+            return anchor_window, positive_mel, negative_mel  # x are the frames,
             # m is the mel of true audio and y is the emotion label
 
 
@@ -186,18 +188,16 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         print('starting epoch:{}'.format(global_epoch))
         prog_bar = tqdm(enumerate(train_data_loader))
 
-        for step, (anchor_window, positive_mfcc, negative_mfcc, label) in prog_bar:
+        for step, (anchor_window, positive_mel, negative_mel) in prog_bar:
 
             anchor_window = anchor_window.to(device)
-            positive_mfcc = positive_mfcc.to(device)
-            negative_mfcc = negative_mfcc.to(device)
-            positive_audio_fv, frame_fv = syncnet(positive_mfcc, anchor_window)
-            negative_audio_fv, _ = syncnet(negative_mfcc, anchor_window)
+            positive_mel = positive_mel.to(device)
+            negative_mel = negative_mel.to(device)
+            positive_audio_fv, frame_fv = syncnet(positive_mel, anchor_window)
+            negative_audio_fv, _ = syncnet(negative_mel, anchor_window)
 
             model.train()
             optimizer.zero_grad()
-
-            label = label.to(device)
 
             loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
 
