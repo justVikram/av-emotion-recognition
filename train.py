@@ -220,6 +220,39 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         global_epoch += 1
 
 
+def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
+    eval_steps = 700
+    print('Evaluating for {} steps'.format(eval_steps))
+    sync_losses, recon_losses = [], []
+    step = 0
+    while 1:
+        for x, indiv_mels, mel, gt in test_data_loader:
+            step += 1
+            model.eval()
+
+            # Move data to CUDA device
+            x = x.to(device)
+            gt = gt.to(device)
+            indiv_mels = indiv_mels.to(device)
+            mel = mel.to(device)
+
+            g = model(indiv_mels, x)
+
+            sync_loss = get_sync_loss(mel, g)
+            l1loss = recon_loss(g, gt)
+
+            sync_losses.append(sync_loss.item())
+            recon_losses.append(l1loss.item())
+
+            if step > eval_steps:
+                averaged_sync_loss = sum(sync_losses) / len(sync_losses)
+                averaged_recon_loss = sum(recon_losses) / len(recon_losses)
+
+                print('L1: {}, Sync loss: {}'.format(averaged_recon_loss, averaged_sync_loss))
+
+                return averaged_sync_loss
+
+
 def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
     checkpoint_path = join(
         checkpoint_dir, "checkpoint_step{:09d}.pth".format(global_step))
