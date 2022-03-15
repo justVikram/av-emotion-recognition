@@ -6,14 +6,14 @@ from glob import glob
 from os.path import dirname, join, basename, isfile
 import numpy as np
 import torch
-from syncnet import SyncNet_color as SyncNet
-from torch import nn
-from torch.nn import functional as F
+from models.syncnet import SyncNet_color as SyncNet
+from torch import optim
 from torch.utils import data as data_utils
 from tqdm import tqdm
 import audio
 from hparams import hparams, get_image_list
 from torch.nn import TripletMarginLoss
+from models.wav2lip import Wav2Lip as Wav2Lip
 
 parser = argparse.ArgumentParser(description='Code for audio-visual emotion recognition')
 
@@ -118,7 +118,6 @@ class Dataset(object):
             # Selecting a random anchor frame from the negative video
             negative_anchor_frame = random.choice(negative_img_names)
 
-
             window = []
             all_read = True
             for frame in anchor_frames:
@@ -159,12 +158,16 @@ class Dataset(object):
 
             negative_mel = self.crop_audio_window(negative_full_length_mfcc.copy(), negative_anchor_frame)
 
+            if negative_mel.shape[0] != syncnet_mel_step_size:
+                continue
+
             # H x W x 3 * T
             anchor_window = np.concatenate(window, axis=2) / 255.  # the whole window of 5 frames is then concatenated
             anchor_window = anchor_window.transpose(2, 0, 1)
 
             anchor_window = torch.FloatTensor(anchor_window)
             positive_mel = torch.FloatTensor(positive_mel.T).unsqueeze(0)
+            negative_mel = torch.FloatTensor(negative_mel.T).unsqueeze(0)
 
             return anchor_window, positive_mel, negative_mel  # x are the frames,
             # m is the mel of true audio and y is the emotion label
@@ -198,6 +201,9 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
 
             model.train()
             optimizer.zero_grad()
+            frame_fv = frame_fv.view(32, 512, 4).max(dim=-1, keepdim=False)[1]
+            # Change frame_fv's data type from long tensor to float tensor
+            frame_fv = frame_fv.float()
 
             loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
 
@@ -225,32 +231,27 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
     print('Evaluating for {} steps'.format(eval_steps))
     sync_losses, recon_losses = [], []
     step = 0
+    trip_loss_history = []
     while 1:
-        for x, indiv_mels, mel, gt in test_data_loader:
+        for anchor_window, positive_mel, negative_mel in test_data_loader:
             step += 1
             model.eval()
 
-            # Move data to CUDA device
-            x = x.to(device)
-            gt = gt.to(device)
-            indiv_mels = indiv_mels.to(device)
-            mel = mel.to(device)
+            anchor_window = anchor_window.to(device)
+            positive_mel = positive_mel.to(device)
+            negative_mel = negative_mel.to(device)
+            positive_audio_fv, frame_fv = syncnet(positive_mel, anchor_window)
+            negative_audio_fv, _ = syncnet(negative_mel, anchor_window)
 
-            g = model(indiv_mels, x)
-
-            sync_loss = get_sync_loss(mel, g)
-            l1loss = recon_loss(g, gt)
-
-            sync_losses.append(sync_loss.item())
-            recon_losses.append(l1loss.item())
+            loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
+            trip_loss_history.append(loss)
 
             if step > eval_steps:
-                averaged_sync_loss = sum(sync_losses) / len(sync_losses)
-                averaged_recon_loss = sum(recon_losses) / len(recon_losses)
+                averaged_trip_loss = sum(trip_loss_history) / len(trip_loss_history)
 
-                print('L1: {}, Sync loss: {}'.format(averaged_recon_loss, averaged_sync_loss))
+                print('Trip loss: {}'.format(averaged_trip_loss))
 
-                return averaged_sync_loss
+                return averaged_trip_loss
 
 
 def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
@@ -264,3 +265,74 @@ def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
         "global_epoch": epoch,
     }, checkpoint_path)
     print("Saved checkpoint:", checkpoint_path)
+
+
+def _load(checkpoint_path):
+    if use_cuda:
+        checkpoint = torch.load(checkpoint_path)
+    else:
+        checkpoint = torch.load(checkpoint_path,
+                                map_location=lambda storage, loc: storage)
+    return checkpoint
+
+
+def load_checkpoint(path, model, optimizer, reset_optimizer=False, overwrite_global_states=True):
+    global global_step
+    global global_epoch
+
+    print("Load checkpoint from: {}".format(path))
+    checkpoint = _load(path)
+    s = checkpoint["state_dict"]
+    new_s = {}
+    for k, v in s.items():
+        new_s[k.replace('module.', '')] = v
+    model.load_state_dict(new_s)
+    if not reset_optimizer:
+        optimizer_state = checkpoint["optimizer"]
+        if optimizer_state is not None:
+            print("Load optimizer state from {}".format(path))
+            optimizer.load_state_dict(checkpoint["optimizer"])
+    if overwrite_global_states:
+        global_step = checkpoint["global_step"]
+        global_epoch = checkpoint["global_epoch"]
+
+    return model
+
+
+if __name__ == "__main__":
+    checkpoint_dir = args.checkpoint_dir
+
+    # Dataset and Data-loader setup
+    train_dataset = Dataset('train')
+    test_dataset = Dataset('val')
+
+    train_data_loader = data_utils.DataLoader(
+        train_dataset, batch_size=hparams.batch_size, shuffle=True,
+        num_workers=hparams.num_workers)
+
+    test_data_loader = data_utils.DataLoader(
+        test_dataset, batch_size=hparams.batch_size,
+        num_workers=4)
+
+    device = torch.device("cuda" if use_cuda else "cpu")
+
+    # Model
+    model = Wav2Lip().to(device)
+    print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
+
+    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
+                           lr=hparams.initial_learning_rate)
+
+    if args.checkpoint_path is not None:
+        load_checkpoint(args.checkpoint_path, model, optimizer, reset_optimizer=False)
+
+    load_checkpoint(args.syncnet_checkpoint_path, syncnet, None, reset_optimizer=True, overwrite_global_states=False)
+
+    if not os.path.exists(checkpoint_dir):
+        os.mkdir(checkpoint_dir)
+
+    # Train!
+    train(device, model, train_data_loader, test_data_loader, optimizer,
+          checkpoint_dir=checkpoint_dir,
+          checkpoint_interval=hparams.checkpoint_interval,
+          nepochs=hparams.nepochs)
