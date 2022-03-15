@@ -73,11 +73,11 @@ hparams = HParams(
 
     ## TRAINING PARAMETERS ##
     img_size=96,
-    fps=25,
-    batch_size=16,
+    fps=30,
+    batch_size=32,
     initial_learning_rate=1e-4,
-    nepochs=200000000000000000,
-    num_workers=16,
+    nepochs=200000,
+    num_workers=8,
     checkpoint_interval=3000,
     eval_interval=3000,
     save_optimizer_state=True,
