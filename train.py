@@ -201,10 +201,7 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
 
             model.train()
             optimizer.zero_grad()
-            frame_fv = frame_fv.view(32, 512, 4).max(dim=-1, keepdim=False)[1]
-            # Change frame_fv's data type from long tensor to float tensor
-            frame_fv = frame_fv.float()
-            frame_fv.requires_grad_(True)
+
             loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
 
             loss.backward()
