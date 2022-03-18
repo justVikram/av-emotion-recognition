@@ -187,6 +187,7 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
     losses = []
     while 1:
         for step, (x, mel, y) in enumerate(test_data_loader):
+            step = step + 1
 
             model.eval()
 
