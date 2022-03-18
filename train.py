@@ -199,6 +199,8 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
             positive_audio_fv, frame_fv = syncnet(positive_mel, anchor_window)
             negative_audio_fv, _ = syncnet(negative_mel, anchor_window)
 
+            frame_fv.requires_grad_(True)
+
             model.train()
             optimizer.zero_grad()
 
