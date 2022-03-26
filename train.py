@@ -238,8 +238,8 @@ def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
             anchor_window = anchor_window.to(device)
             positive_mel = positive_mel.to(device)
             negative_mel = negative_mel.to(device)
-            positive_audio_fv, frame_fv = syncnet(positive_mel, anchor_window)
-            negative_audio_fv, _ = syncnet(negative_mel, anchor_window)
+            positive_audio_fv, frame_fv = model(positive_mel, anchor_window)
+            negative_audio_fv, _ = model(negative_mel, anchor_window)
 
             loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
             trip_loss_history.append(loss)
