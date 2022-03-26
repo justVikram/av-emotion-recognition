@@ -33,7 +33,7 @@ use_cuda = torch.cuda.is_available()
 print('use_cuda: {}'.format(use_cuda))
 
 syncnet_T = 5
-syncnet_mel_step_size = 13  # TODO: What to select?
+syncnet_mel_step_size = 13
 
 
 class Dataset(object):
@@ -192,17 +192,16 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
         prog_bar = tqdm(enumerate(train_data_loader))
 
         for step, (anchor_window, positive_mel, negative_mel) in prog_bar:
+            model.train()
+            optimizer.zero_grad()
 
             anchor_window = anchor_window.to(device)
             positive_mel = positive_mel.to(device)
             negative_mel = negative_mel.to(device)
-            positive_audio_fv, frame_fv = syncnet(positive_mel, anchor_window)
-            negative_audio_fv, _ = syncnet(negative_mel, anchor_window)
+            positive_audio_fv, frame_fv = model(positive_mel, anchor_window)
+            negative_audio_fv, _ = model(negative_mel, anchor_window)
 
             frame_fv.requires_grad_(True)
-
-            model.train()
-            optimizer.zero_grad()
 
             loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
 
@@ -316,7 +315,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if use_cuda else "cpu")
 
     # Model
-    model = Wav2Lip().to(device)
+    model = SyncNet().to(device)
     print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
