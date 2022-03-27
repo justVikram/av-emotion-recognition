@@ -91,21 +91,21 @@ class Dataset(object):
         support = dict()
         anchor_window = []
         positive_mel = []
-        while len(support.keys()) <= 2:
-            while 1:
-                idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from train is chosen
+        while len(support.keys()) <= 2: 
+            while 1: #infinite loop?
+                idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from test is chosen
                 vid_name = self.all_videos[idx]
                 identifiers = vid_name.split('_')
                 label = identifiers[2]
                 speaker_identity = identifiers[0]
 
                 img_names = list(glob(join(vid_name, '*.jpg')))  # all the jpg images of the particular folder is stored
-                if len(img_names) <= 3 * syncnet_T:
+                if len(img_names) <= 3 * syncnet_T: #why?
                     continue
                 anchor_frame = random.choice(img_names)  # any image is chosen from that particular folder
 
                 anchor_frames = self.get_window(anchor_frame)  # get 5 frames from that video
-                if anchor_frames is None:
+                if anchor_frames is None: #if the video is too short
                     continue
 
                 window = []
@@ -133,21 +133,21 @@ class Dataset(object):
                 except Exception as e:
                     continue
 
-                positive_mel = self.crop_audio_window(full_length_mfcc.copy(), anchor_frame)  # mel wrt to the frame
+                positive_mel = self.crop_audio_window(full_length_mfcc.copy(), anchor_frame)  # mel wrt to the frame 
 
-                if positive_mel.shape[0] != syncnet_mel_step_size:
+                if positive_mel.shape[0] != syncnet_mel_step_size: #if the audio is too short?
                     continue
 
                 anchor_window = np.concatenate(window,
                                                axis=2) / 255.  # the whole window of 5 frames is then concatenated
-                anchor_window = anchor_window.transpose(2, 0, 1)
+                anchor_window = anchor_window.transpose(2, 0, 1) 
 
                 anchor_window = torch.FloatTensor(anchor_window)
                 positive_mel = torch.FloatTensor(positive_mel.T).unsqueeze(0)
-                break
+                break # break the while 1 loop
 
-            if i == 0:
-                i = 1
+            if i == 0: 
+                i = 1 
                 query.update({
                     label: (anchor_window, positive_mel)
                 })
