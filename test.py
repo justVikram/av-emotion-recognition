@@ -92,7 +92,7 @@ class Dataset(object):
         anchor_window = []
         positive_mel = []
         while len(support.keys()) <= 2: 
-            while 1: #infinite loop?
+            while 1: 
                 idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from test is chosen
                 vid_name = self.all_videos[idx]
                 identifiers = vid_name.split('_')
@@ -100,7 +100,7 @@ class Dataset(object):
                 speaker_identity = identifiers[0]
 
                 img_names = list(glob(join(vid_name, '*.jpg')))  # all the jpg images of the particular folder is stored
-                if len(img_names) <= 3 * syncnet_T: #why?
+                if len(img_names) <= 3 * syncnet_T: 
                     continue
                 anchor_frame = random.choice(img_names)  # any image is chosen from that particular folder
 
@@ -120,7 +120,7 @@ class Dataset(object):
                     except Exception as e:
                         all_read = False
                         break
-                    window.append(img)  # all 2 images are appended
+                    window.append(img)  # all 5 images are appended
 
                 if not all_read:
                     continue
@@ -135,7 +135,7 @@ class Dataset(object):
 
                 positive_mel = self.crop_audio_window(full_length_mfcc.copy(), anchor_frame)  # mel wrt to the frame 
 
-                if positive_mel.shape[0] != syncnet_mel_step_size: #if the audio is too short?
+                if positive_mel.shape[0] != syncnet_mel_step_size: #continue if all 13 coefficients are fetched
                     continue
 
                 anchor_window = np.concatenate(window,
