@@ -1,7 +1,7 @@
 import random
 from sklearn.model_selection import train_test_split
 import os
-from distutils.dir_util import copy_tree
+from distutils.dir_util import copy_tree #copies entire dir structure
 
 
 def segregate_emotions(path: os.path) -> None:
