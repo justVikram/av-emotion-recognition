@@ -19,7 +19,7 @@ if __name__ == '__main__':
     img = r'/Users/avikram/Projects/av-emotion-recognition/dataset/res_img.jpg'
     img = face_recognition.load_image_file(img)
 
-    # emotion_dict= {'Angry': 0, 'Sad': 5, 'Neutral': 4, 'Disgust': 1, 'Surprise': 6, 'Fear': 2, 'Happy': 3}
+    emotion_dict= {'Angry': 0, 'Sad': 5, 'Neutral': 4, 'Disgust': 1, 'Surprise': 6, 'Fear': 2, 'Happy': 3}
     model = load_model(r"./weights/AVER_model.hdf5")
     # Convert image to black and white
     img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -28,3 +28,7 @@ if __name__ == '__main__':
     face_image = face_image.astype('float32')
     predicted_class = np.argmax(model.predict(face_image))
     print(predicted_class)
+
+    label_map = dict((v, k) for k, v in emotion_dict.items())
+    predicted_label = label_map[predicted_class]
+    print(predicted_label)
