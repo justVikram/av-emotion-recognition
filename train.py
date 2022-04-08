@@ -14,6 +14,7 @@ import audio
 from hparams import hparams, get_image_list
 from torch.nn import TripletMarginLoss
 from models.wav2lip import Wav2Lip as Wav2Lip
+from sklearn.metrics.pairwise import cosine_similarity
 
 parser = argparse.ArgumentParser(description='Code for audio-visual emotion recognition')
 
@@ -173,6 +174,82 @@ class Dataset(object):
             # m is the mel of true audio and y is the emotion label
 
 
+class DatasetTest(Dataset):
+    def __getitem__(self, idx):
+        i = 0
+        label = str()
+        query = dict()
+        support = dict()
+        anchor_window = []
+        positive_mel = []
+        while len(support.keys()) <= 2:
+            while 1:
+                idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from test is chosen
+                vid_name = self.all_videos[idx]
+                identifiers = vid_name.split('_')
+                label = identifiers[2]
+                speaker_identity = identifiers[0]
+
+                img_names = list(glob(join(vid_name, '*.jpg')))  # all the jpg images of the particular folder is stored
+                if len(img_names) <= 3 * syncnet_T:
+                    continue
+                anchor_frame = random.choice(img_names)  # any image is chosen from that particular folder
+
+                anchor_frames = self.get_window(anchor_frame)  # get 5 frames from that video
+                if anchor_frames is None:  # if the video is too short
+                    continue
+
+                window = []
+                all_read = True
+                for frame in anchor_frames:
+                    img = cv2.imread(frame)
+                    if img is None:
+                        all_read = False
+                        break
+                    try:
+                        img = cv2.resize(img, (hparams.img_size, hparams.img_size))
+                    except Exception as e:
+                        all_read = False
+                        break
+                    window.append(img)  # all 5 images are appended
+
+                if not all_read:
+                    continue
+
+                # MFCC from positive audio sample
+                try:
+                    audio_file = join(vid_name, "audio.wav")
+                    wav = audio.load_wav(audio_file, hparams.sample_rate)  # the entire wav file is loaded
+                    full_length_mfcc = audio.melspectrogram(wav).T  # mel of entire audio
+                except Exception as e:
+                    continue
+
+                positive_mel = self.crop_audio_window(full_length_mfcc.copy(), anchor_frame)  # mel wrt to the frame
+
+                if positive_mel.shape[0] != syncnet_mel_step_size:  # continue if all 13 coefficients are fetched
+                    continue
+
+                anchor_window = np.concatenate(window,
+                                               axis=2) / 255.  # the whole window of 5 frames is then concatenated
+                anchor_window = anchor_window.transpose(2, 0, 1)
+
+                anchor_window = torch.FloatTensor(anchor_window)
+                positive_mel = torch.FloatTensor(positive_mel.T).unsqueeze(0)
+                break  # break the while 1 loop
+
+            if i == 0:
+                i = 1
+                query.update({
+                    label: (anchor_window, positive_mel)
+                })
+
+            else:
+                support.update({
+                    label: (anchor_window, positive_mel)
+                })
+        return query, support
+
+
 triplet_loss = TripletMarginLoss()
 
 device = torch.device("cuda" if use_cuda else "cpu")
@@ -227,29 +304,48 @@ def train(device, model, train_data_loader, test_data_loader, optimizer,
 def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
     eval_steps = 700
     print('Evaluating for {} steps'.format(eval_steps))
-    sync_losses, recon_losses = [], []
     step = 0
-    trip_loss_history = []
+    true_positive = 0
     while 1:
-        for anchor_window, positive_mel, negative_mel in test_data_loader:
+        for support, query in test_data_loader:
             step += 1
             model.eval()
 
-            anchor_window = anchor_window.to(device)
-            positive_mel = positive_mel.to(device)
-            negative_mel = negative_mel.to(device)
-            positive_audio_fv, frame_fv = model(positive_mel, anchor_window)
-            negative_audio_fv, _ = model(negative_mel, anchor_window)
+            # Retrieve anchor window and mel from query
+            q_anchor_window, q_positive_mel = query[list(query.keys())[0]][0], query[list(query.keys())[0]][1]
+            q_label = list(query.keys())[0]
+            cosine_loss_audio = []
+            cosine_loss_frame = []
+            emotion_dict = {}
+            i = 0
 
-            loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
-            trip_loss_history.append(loss)
+            for label, tuple in support.items():
+                emotion_dict.update({i: label})
+                i = i + 1
+                # Retrieve anchor window and mel from support
+                s_anchor_window, s_positive_mel = tuple[0], tuple[1]
+
+                # Extract feature vectors from support anchor window and mel
+                s_audio_fv, s_frame_fv = model(s_positive_mel, s_anchor_window)
+                q_audio_fv, q_frame_fv = model(q_positive_mel, q_anchor_window)
+
+                # Calculate cosine similarity between support and query for audio
+                cosine_loss_audio.append(cosine_similarity(s_audio_fv, q_audio_fv))
+
+                # Calculate cosine similarity between support and query for frames
+                cosine_loss_frame.append(cosine_similarity(s_audio_fv, q_audio_fv))
+
+            emotion_idx = np.argmax(np.mean(np.array([cosine_loss_frame, cosine_loss_audio]), axis=0))
+            predicted_emotion = emotion_dict[emotion_idx]
+            if predicted_emotion == q_label:
+                true_positive += 1
 
             if step > eval_steps:
-                averaged_trip_loss = sum(trip_loss_history) / len(trip_loss_history)
+                accuracy = true_positive / eval_steps
 
-                print('Trip loss: {}'.format(averaged_trip_loss))
+                print('Accuracy: {}'.format(accuracy))
 
-                return averaged_trip_loss
+                return accuracy
 
 
 def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
@@ -302,7 +398,7 @@ if __name__ == "__main__":
 
     # Dataset and Data-loader setup
     train_dataset = Dataset('train')
-    test_dataset = Dataset('val')
+    test_dataset = DatasetTest('val')
 
     train_data_loader = data_utils.DataLoader(
         train_dataset, batch_size=hparams.batch_size, shuffle=True,
