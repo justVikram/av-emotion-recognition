@@ -275,3 +275,4 @@ fabric.properties
 
 # Ignore weights directory
 weights/
+Documentation/
