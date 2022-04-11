@@ -192,6 +192,8 @@ class DatasetTest(Dataset):
                     vid_name = self.all_videos[idx]
                     identifiers = vid_name.split('_')
                     label = identifiers[2]
+                    prev_label=label
+
                 speaker_identity = identifiers[0]
 
                 img_names = list(glob(join(vid_name, '*.jpg')))  # all the jpg images of the particular folder is stored
