@@ -176,18 +176,22 @@ class Dataset(object):
 
 class DatasetTest(Dataset):
     def __getitem__(self, idx):
-        i = 0
         label = str()
         query = dict()
         support = dict()
         anchor_window = []
         positive_mel = []
         while len(support.keys()) <= 2:
-            while 1:
+                #are we ensuring the fact that the same index isn't used again?
                 idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from test is chosen
                 vid_name = self.all_videos[idx]
                 identifiers = vid_name.split('_')
                 label = identifiers[2]
+                while label == prev_label:
+                    idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from test is chosen
+                    vid_name = self.all_videos[idx]
+                    identifiers = vid_name.split('_')
+                    label = identifiers[2]
                 speaker_identity = identifiers[0]
 
                 img_names = list(glob(join(vid_name, '*.jpg')))  # all the jpg images of the particular folder is stored
@@ -235,18 +239,19 @@ class DatasetTest(Dataset):
 
                 anchor_window = torch.FloatTensor(anchor_window)
                 positive_mel = torch.FloatTensor(positive_mel.T).unsqueeze(0)
-                break  # break the while 1 loop
 
-            if i == 0:
-                i = 1
-                query.update({
+                if query.keys()==0:
+                    query.update({
                     label: (anchor_window, positive_mel)
                 })
 
-            else:
-                support.update({
+                else:
+                    support.update({
                     label: (anchor_window, positive_mel)
                 })
+
+                prev_label=label
+                
         return query, support
 
 
