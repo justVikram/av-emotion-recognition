@@ -95,7 +95,7 @@ def librosa_pad_lr(x, fsize, fshift):
 _mel_basis = None
 
 
-def _linear_to_mel(spectogram):
+def _linear_to_mel(spectogram): 
     global _mel_basis
     if _mel_basis is None:
         _mel_basis = _build_mel_basis()
