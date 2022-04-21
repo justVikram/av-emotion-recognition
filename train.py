@@ -1,3 +1,6 @@
+
+
+# python  test.py --data_root ~/AV/MEAD/ --checkpoint_dir ~/AV/av-emotion-recognition/eval_checkpoints/ --syncnet_checkpoint_path ~/AV/latest.pth
 import argparse
 import cv2
 import os
@@ -175,24 +178,21 @@ class Dataset(object):
 
 
 class DatasetTest(Dataset):
+    def __init__(self, split):
+        super(DatasetTest, self).__init__(split)
+
     def __getitem__(self, idx):
-        label = str()
         query = dict()
         support = dict()
         anchor_window = []
         positive_mel = []
-        while len(support.keys()) <= 2:
-                #are we ensuring the fact that the same index isn't used again?
+        #print("getitem() was called")
+        while len(support.keys()) < 4:
+            while 1:
                 idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from test is chosen
                 vid_name = self.all_videos[idx]
                 identifiers = vid_name.split('_')
                 label = identifiers[2]
-                while label == prev_label:
-                    idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from test is chosen
-                    vid_name = self.all_videos[idx]
-                    identifiers = vid_name.split('_')
-                    label = identifiers[2]
-                    prev_label=label
 
                 speaker_identity = identifiers[0]
 
@@ -241,19 +241,22 @@ class DatasetTest(Dataset):
 
                 anchor_window = torch.FloatTensor(anchor_window)
                 positive_mel = torch.FloatTensor(positive_mel.T).unsqueeze(0)
+                #print("Going to break from infinite loop. The label picked up is: ", label)
+                break  # break the while 1 loop
 
-                if query.keys()==0:
-                    query.update({
+            if len(query.keys()) == 0:
+                query.update({
                     label: (anchor_window, positive_mel)
                 })
+                #print("Query was updated and now has size: ", len(query.keys()))
 
-                else:
-                    support.update({
+            else:
+                support.update({
                     label: (anchor_window, positive_mel)
                 })
+                #print("Support was updated and now has size: ", len(support.keys()))
 
-                prev_label=label
-                
+        #print("About to return from getitem()")
         return query, support
 
 
@@ -265,107 +268,89 @@ for p in syncnet.parameters():
     p.requires_grad = False
 
 
-def train(device, model, train_data_loader, test_data_loader, optimizer,
-          checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
-    global global_step, global_epoch
-    resumed_step = global_step
-
-    while global_epoch < nepochs:
-        running_loss = 0.
-        print('starting epoch:{}'.format(global_epoch))
-        prog_bar = tqdm(enumerate(train_data_loader))
-
-        for step, (anchor_window, positive_mel, negative_mel) in prog_bar:
-            model.train()
-            optimizer.zero_grad()
-
-            anchor_window = anchor_window.to(device)
-            positive_mel = positive_mel.to(device)
-            negative_mel = negative_mel.to(device)
-            positive_audio_fv, frame_fv = model(positive_mel, anchor_window)
-            negative_audio_fv, _ = model(negative_mel, anchor_window)
-
-            frame_fv.requires_grad_(True)
-
-            loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
-
-            loss.backward()
-            optimizer.step()
-
-            global_step += 1
-            cur_session_steps = global_step - resumed_step
-            running_loss += loss.item()
-
-            if global_step == 1 or global_step % checkpoint_interval == 0:
-                save_checkpoint(model, optimizer, global_step, checkpoint_dir, global_epoch)
-
-            if global_step % hparams.syncnet_eval_interval == 0:
-                with torch.no_grad():
-                    eval_model(test_data_loader, global_step, device, model, checkpoint_dir)
-
-            prog_bar.set_description('Loss: {}'.format(running_loss / (step + 1)))
-
-        global_epoch += 1
-
-
-def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
-    eval_steps = 700
+def eval_model(test_data_loader, model, device='cpu'):
+    eval_steps = 100
     print('Evaluating for {} steps'.format(eval_steps))
-    step = 0
     true_positive = 0
-    while 1:
-        for support, query in test_data_loader:
-            step += 1
-            model.eval()
 
-            # Retrieve anchor window and mel from query
-            q_anchor_window, q_positive_mel = query[list(query.keys())[0]][0], query[list(query.keys())[0]][1]
-            q_label = list(query.keys())[0]
-            cosine_loss_audio = []
-            cosine_loss_frame = []
-            emotion_dict = {}
-            i = 0
+    print("Entering test_data_loader loop")
 
-            for label, tuple in support.items():
-                emotion_dict.update({i: label})
-                i = i + 1
-                # Retrieve anchor window and mel from support
-                s_anchor_window, s_positive_mel = tuple[0], tuple[1]
+    step = 0
 
-                # Extract feature vectors from support anchor window and mel
-                s_audio_fv, s_frame_fv = model(s_positive_mel, s_anchor_window)
-                q_audio_fv, q_frame_fv = model(q_positive_mel, q_anchor_window)
+    for step in range(eval_steps):
+        if step >= eval_steps:
+            break
 
-                # Calculate cosine similarity between support and query for audio
-                cosine_loss_audio.append(cosine_similarity(s_audio_fv, q_audio_fv))
+        print(f"-------------------------------------Iteration: {step}-------------------------------------")
+        query, support = test_dataset[step]
+        step += 1
+        print("Successfully obtained a query & support set")
+        model.eval()
+        # Retrieve anchor window and mel from query
+        q_anchor_window, q_positive_mel = query[list(query.keys())[0]][0], query[list(query.keys())[0]][1]
+        q_label = list(query.keys())[0]
+        cosine_loss_audio = []
+        cosine_loss_frame = []
+        emotion_dict = {}
+        i = 0
 
-                # Calculate cosine similarity between support and query for frames
-                cosine_loss_frame.append(cosine_similarity(s_audio_fv, q_audio_fv))
+        for label, tuple in support.items():
+            emotion_dict.update({i: label})
+            i = i + 1
+            # Retrieve anchor window and mel from support
+            s_anchor_window, s_positive_mel = tuple[0], tuple[1]
 
-            emotion_idx = np.argmax(np.mean(np.array([cosine_loss_frame, cosine_loss_audio]), axis=0))
-            predicted_emotion = emotion_dict[emotion_idx]
-            if predicted_emotion == q_label:
-                true_positive += 1
+            # Reshape & send support data to GPU
+            s_anchor_window = s_anchor_window.unsqueeze(0)
+            s_positive_mel = s_positive_mel.unsqueeze(0)
+            # s_anchor_window = s_anchor_window.to(device)
+            # s_positive_mel = s_positive_mel.to(device)
 
-            if step > eval_steps:
-                accuracy = true_positive / eval_steps
+            #print("Printing support shapes")
+            #print(s_anchor_window.shape)
+            #print(s_positive_mel.shape)
 
-                print('Accuracy: {}'.format(accuracy))
+            # Reshape & send query data to GPU
+            #print(q_anchor_window.dtype)
 
-                return accuracy
+            if q_anchor_window.shape != (1, 15, 96, 96):
+                q_anchor_window = q_anchor_window.unsqueeze(0)
+                q_positive_mel = q_positive_mel.unsqueeze(0)
+                # q_anchor_window = q_anchor_window.to(device)
+                # q_positive_mel = q_positive_mel.to(device)
 
+            #print("Printing query shapes")
+            #print(q_anchor_window.shape)
+            #print(q_positive_mel.shape)
 
-def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
-    checkpoint_path = join(
-        checkpoint_dir, "checkpoint_step{:09d}.pth".format(global_step))
-    optimizer_state = optimizer.state_dict() if hparams.save_optimizer_state else None
-    torch.save({
-        "state_dict": model.state_dict(),
-        "optimizer": optimizer_state,
-        "global_step": step,
-        "global_epoch": epoch,
-    }, checkpoint_path)
-    print("Saved checkpoint:", checkpoint_path)
+            # Extract feature vectors from support anchor window and mel, and query...
+            s_audio_fv, s_frame_fv = model(s_positive_mel, s_anchor_window)
+            q_audio_fv, q_frame_fv = model(q_positive_mel, q_anchor_window)
+
+            #print("FV's extracted")
+            # Convert to CPU memory
+            # s_audio_fv, q_audio_fv = s_audio_fv.cpu(), q_audio_fv.cpu()
+            # s_frame_fv, q_frame_fv = s_frame_fv.cpu(), q_frame_fv.cpu()
+
+            # Calculate cosine similarity between support and query for audio
+            cosine_loss_audio.append(cosine_similarity(s_audio_fv, q_audio_fv))
+
+            # Calculate cosine similarity between support and query for frames
+            cosine_loss_frame.append(cosine_similarity(s_frame_fv, q_frame_fv))
+            print("---PROCESSED A SUPPORT PAIR---")
+
+        emotion_idx = np.argmax(np.mean(np.array([cosine_loss_frame, cosine_loss_audio]), axis=0))
+        predicted_emotion = emotion_dict[emotion_idx]
+        if predicted_emotion == q_label:
+            print("Got a hit")
+            true_positive += 1
+
+    if step >= eval_steps:
+        accuracy = true_positive / eval_steps
+
+        print(f'Accuracy, is {true_positive}/{eval_steps} or {accuracy}')
+
+        return accuracy
 
 
 def _load(checkpoint_path):
@@ -404,21 +389,16 @@ if __name__ == "__main__":
     checkpoint_dir = args.checkpoint_dir
 
     # Dataset and Data-loader setup
-    train_dataset = Dataset('train')
     test_dataset = DatasetTest('val')
 
-    train_data_loader = data_utils.DataLoader(
-        train_dataset, batch_size=hparams.batch_size, shuffle=True,
-        num_workers=hparams.num_workers)
-
     test_data_loader = data_utils.DataLoader(
-        test_dataset, batch_size=hparams.batch_size,
+        test_dataset, batch_size=2,
         num_workers=4)
 
     device = torch.device("cuda" if use_cuda else "cpu")
 
     # Model
-    model = SyncNet().to(device)
+    model = SyncNet().to("cpu")
     print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
@@ -432,8 +412,5 @@ if __name__ == "__main__":
     if not os.path.exists(checkpoint_dir):
         os.mkdir(checkpoint_dir)
 
-    # Train!
-    train(device, model, train_data_loader, test_data_loader, optimizer,
-          checkpoint_dir=checkpoint_dir,
-          checkpoint_interval=hparams.checkpoint_interval,
-          nepochs=hparams.nepochs)
+    with torch.no_grad():
+        eval_model(test_data_loader, model)
