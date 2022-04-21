@@ -1,6 +1,6 @@
+#  python train.py --data_root ~/AV/MEAD_preprocessed/ --checkpoint_dir ~/AV/av-emotion-recognition/eval_checkpoints/ --syncnet_checkpoint_path ~/AV/lipsync_expert.pth 
 
 
-# python  test.py --data_root ~/AV/MEAD/ --checkpoint_dir ~/AV/av-emotion-recognition/eval_checkpoints/ --syncnet_checkpoint_path ~/AV/latest.pth
 import argparse
 import cv2
 import os
@@ -27,7 +27,7 @@ parser.add_argument('--checkpoint_dir', help='Save checkpoints to this directory
 parser.add_argument('--syncnet_checkpoint_path', help='Load the ', required=True,
                     type=str)
 
-parser.add_argument('--checkpoint_path', help='Resume from this checkpoint', default=None, type=str)
+parser.add_argument('--checkpoint_path', help='Resume from this checkpoint', type=str)
 
 args = parser.parse_args()
 
@@ -186,13 +186,13 @@ class DatasetTest(Dataset):
         support = dict()
         anchor_window = []
         positive_mel = []
-        #print("getitem() was called")
-        while len(support.keys()) < 4:
+
+        while len(support.keys()) < 2:
             while 1:
                 idx = random.randint(0, len(self.all_videos) - 1)  # any random folder name from test is chosen
                 vid_name = self.all_videos[idx]
                 identifiers = vid_name.split('_')
-                label = identifiers[2]
+                label = identifiers[3]
 
                 speaker_identity = identifiers[0]
 
@@ -241,22 +241,18 @@ class DatasetTest(Dataset):
 
                 anchor_window = torch.FloatTensor(anchor_window)
                 positive_mel = torch.FloatTensor(positive_mel.T).unsqueeze(0)
-                #print("Going to break from infinite loop. The label picked up is: ", label)
-                break  # break the while 1 loop
+                break
 
             if len(query.keys()) == 0:
                 query.update({
                     label: (anchor_window, positive_mel)
                 })
-                #print("Query was updated and now has size: ", len(query.keys()))
 
             else:
                 support.update({
                     label: (anchor_window, positive_mel)
                 })
-                #print("Support was updated and now has size: ", len(support.keys()))
 
-        #print("About to return from getitem()")
         return query, support
 
 
@@ -268,12 +264,53 @@ for p in syncnet.parameters():
     p.requires_grad = False
 
 
-def eval_model(test_data_loader, model, device='cpu'):
-    eval_steps = 100
+def train(device, model, train_data_loader, test_data_loader, optimizer,
+          checkpoint_dir=None, checkpoint_interval=None, nepochs=None):
+    global global_step, global_epoch
+    resumed_step = global_step
+
+    while global_epoch < nepochs:
+        running_loss = 0.
+        print('starting epoch:{}'.format(global_epoch))
+        prog_bar = tqdm(enumerate(train_data_loader))
+
+        for step, (anchor_window, positive_mel, negative_mel) in prog_bar:
+            model.train()
+            optimizer.zero_grad()
+
+            anchor_window = anchor_window.to(device)
+            positive_mel = positive_mel.to(device)
+            negative_mel = negative_mel.to(device)
+            positive_audio_fv, frame_fv = model(positive_mel, anchor_window)
+            negative_audio_fv, _ = model(negative_mel, anchor_window)
+
+            frame_fv.requires_grad_(True)
+
+            loss = triplet_loss(frame_fv, positive_audio_fv, negative_audio_fv)
+
+            loss.backward()
+            optimizer.step()
+
+            global_step += 1
+            cur_session_steps = global_step - resumed_step
+            running_loss += loss.item()
+
+            if global_step == 1 or global_step % checkpoint_interval == 0:
+                save_checkpoint(model, optimizer, global_step, checkpoint_dir, global_epoch)
+
+            prog_bar.set_description('Loss: {}'.format(running_loss / (step + 1)))
+
+        global_epoch += 1
+
+
+def eval_model(test_data_loader, global_step, device, model, checkpoint_dir):
+    eval_steps = 250
     print('Evaluating for {} steps'.format(eval_steps))
     true_positive = 0
 
     print("Entering test_data_loader loop")
+
+    prog_bar = tqdm(enumerate(test_data_loader))
 
     step = 0
 
@@ -303,15 +340,6 @@ def eval_model(test_data_loader, model, device='cpu'):
             # Reshape & send support data to GPU
             s_anchor_window = s_anchor_window.unsqueeze(0)
             s_positive_mel = s_positive_mel.unsqueeze(0)
-            # s_anchor_window = s_anchor_window.to(device)
-            # s_positive_mel = s_positive_mel.to(device)
-
-            #print("Printing support shapes")
-            #print(s_anchor_window.shape)
-            #print(s_positive_mel.shape)
-
-            # Reshape & send query data to GPU
-            #print(q_anchor_window.dtype)
 
             if q_anchor_window.shape != (1, 15, 96, 96):
                 q_anchor_window = q_anchor_window.unsqueeze(0)
@@ -319,18 +347,9 @@ def eval_model(test_data_loader, model, device='cpu'):
                 # q_anchor_window = q_anchor_window.to(device)
                 # q_positive_mel = q_positive_mel.to(device)
 
-            #print("Printing query shapes")
-            #print(q_anchor_window.shape)
-            #print(q_positive_mel.shape)
-
             # Extract feature vectors from support anchor window and mel, and query...
             s_audio_fv, s_frame_fv = model(s_positive_mel, s_anchor_window)
             q_audio_fv, q_frame_fv = model(q_positive_mel, q_anchor_window)
-
-            #print("FV's extracted")
-            # Convert to CPU memory
-            # s_audio_fv, q_audio_fv = s_audio_fv.cpu(), q_audio_fv.cpu()
-            # s_frame_fv, q_frame_fv = s_frame_fv.cpu(), q_frame_fv.cpu()
 
             # Calculate cosine similarity between support and query for audio
             cosine_loss_audio.append(cosine_similarity(s_audio_fv, q_audio_fv))
@@ -345,12 +364,24 @@ def eval_model(test_data_loader, model, device='cpu'):
             print("Got a hit")
             true_positive += 1
 
-    if step >= eval_steps:
-        accuracy = true_positive / eval_steps
+    accuracy = true_positive / step
 
-        print(f'Accuracy, is {true_positive}/{eval_steps} or {accuracy}')
+    print(f'Accuracy, is {true_positive}/{step} or {accuracy}')
 
-        return accuracy
+    return accuracy
+
+
+def save_checkpoint(model, optimizer, step, checkpoint_dir, epoch):
+    checkpoint_path = join(
+        checkpoint_dir, "checkpoint_step{:09d}.pth".format(global_step))
+    optimizer_state = optimizer.state_dict() if hparams.save_optimizer_state else None
+    torch.save({
+        "state_dict": model.state_dict(),
+        "optimizer": optimizer_state,
+        "global_step": step,
+        "global_epoch": epoch,
+    }, checkpoint_path)
+    print("Saved checkpoint:", checkpoint_path)
 
 
 def _load(checkpoint_path):
@@ -389,16 +420,21 @@ if __name__ == "__main__":
     checkpoint_dir = args.checkpoint_dir
 
     # Dataset and Data-loader setup
+    train_dataset = Dataset('train')
     test_dataset = DatasetTest('val')
 
+    train_data_loader = data_utils.DataLoader(
+        train_dataset, batch_size=hparams.batch_size, shuffle=True,
+        num_workers=hparams.num_workers)
+
     test_data_loader = data_utils.DataLoader(
-        test_dataset, batch_size=2,
+        test_dataset, batch_size=hparams.batch_size,
         num_workers=4)
 
     device = torch.device("cuda" if use_cuda else "cpu")
 
     # Model
-    model = SyncNet().to("cpu")
+    model = SyncNet().to(device)
     print('total trainable params {}'.format(sum(p.numel() for p in model.parameters() if p.requires_grad)))
 
     optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad],
@@ -412,5 +448,8 @@ if __name__ == "__main__":
     if not os.path.exists(checkpoint_dir):
         os.mkdir(checkpoint_dir)
 
-    with torch.no_grad():
-        eval_model(test_data_loader, model)
+    # Train!
+    train(device, model, train_data_loader, test_data_loader, optimizer,
+          checkpoint_dir=checkpoint_dir,
+          checkpoint_interval=hparams.checkpoint_interval,
+          nepochs=hparams.nepochs)
