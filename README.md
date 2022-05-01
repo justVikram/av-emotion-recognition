@@ -1,4 +1,4 @@
-# Audio-Visual Emotion Recognition
+# Audio-Visual Emotion Recognition using Few-shot Learning
 
 ## About
 Minor Project, VI Semester, 2021.
@@ -30,3 +30,4 @@ python train.py --data_root <path/to/MEAD/dataset> --checkpoint_dir <path/to/sav
 ```python
 python test.py --data_root <path/to/MEAD/dataset> --model_checkpoint_path <path/to/model>
 ```
+
